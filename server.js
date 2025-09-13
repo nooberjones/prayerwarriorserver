@@ -40,6 +40,9 @@ app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Trust proxy for rate limiting (required for Render deployment)
+app.set('trust proxy', 1);
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
