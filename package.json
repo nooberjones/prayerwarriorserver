@@ -1,5 +1,4 @@
 {
-<<<<<<< HEAD
   "name": "PrayerWarriorsApp",
   "version": "0.0.1",
   "private": true,
@@ -40,7 +39,6 @@
     "node": ">=20"
   }
 }
-=======
   "name": "prayer-warrior-backend",
   "version": "1.0.0",
   "description": "Backend API for Prayer Warrior app",
@@ -68,4 +66,3 @@
     "node": ">=18.0.0"
   }
 }
->>>>>>> f17795eaa4a2461ddf2370617b562422a87dec29
