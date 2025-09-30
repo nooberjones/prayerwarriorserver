@@ -345,6 +345,41 @@ app.get('/api/prayer-requests', async (req, res) => {
   }
 });
 
+// Get specific prayer request by ID
+app.get('/api/prayer-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        pr.id,
+        pr.topic_id,
+        pr.device_id,
+        pr.description,
+        pr.prayer_count,
+        pr.active_prayers,
+        pr.created_at,
+        pr.expires_at,
+        pt.title as topic_title,
+        pt.category,
+        CASE WHEN pt.parent_id IS NULL THEN pt.title ELSE p.title END as main_category
+      FROM prayer_requests pr
+      JOIN prayer_topics pt ON pr.topic_id = pt.id
+      LEFT JOIN prayer_topics p ON pt.parent_id = p.id
+      WHERE pr.id = $1 AND pr.expires_at > NOW()
+    `, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Prayer request not found or expired' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error fetching prayer request:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Start praying for a request (join prayer)
 app.post('/api/prayer-requests/:id/join', async (req, res) => {
   const { id } = req.params;
@@ -703,7 +738,7 @@ async function sendPushNotification(pushToken, platform, title, body, data = {})
 
 // Send prayer request to all devices
 app.post('/api/send-prayer-request', async (req, res) => {
-  const { requesterName, prayerText, requesterDeviceId } = req.body;
+  const { requesterName, prayerText, requesterDeviceId, prayer_request_id } = req.body;
   
   if (!requesterName || !prayerText) {
     return res.status(400).json({ error: 'Requester name and prayer text are required' });
@@ -723,22 +758,31 @@ app.post('/api/send-prayer-request', async (req, res) => {
     const devices = devicesResult.rows;
     
     console.log(`📤 Sending prayer request to ${devices.length} devices`);
+    console.log(`📋 Prayer request ID: ${prayer_request_id}`);
     
     // Send push notifications to all devices
     const notificationPromises = devices.map(device => {
       const title = '🙏 New Prayer Request';
       const body = `${requesterName} is asking for prayer: ${prayerText.substring(0, 80)}${prayerText.length > 80 ? '...' : ''}`;
       
+      // Include prayer_request_id in notification data for navigation
+      const notificationData = {
+        type: 'prayer_request',
+        requesterName: requesterName,
+        prayerText: prayerText,
+      };
+      
+      // Add prayer_request_id if provided
+      if (prayer_request_id) {
+        notificationData.prayer_request_id = prayer_request_id.toString();
+      }
+      
       return sendPushNotification(
         device.push_token,
         device.platform,
         title,
         body,
-        {
-          type: 'prayer_request',
-          requesterName: requesterName,
-          prayerText: prayerText,
-        }
+        notificationData
       );
     });
     
@@ -752,7 +796,8 @@ app.post('/api/send-prayer-request', async (req, res) => {
       success: true,
       message: 'Prayer request sent to all devices',
       devices_notified: devices.length,
-      successful_notifications: successCount
+      successful_notifications: successCount,
+      prayer_request_id: prayer_request_id
     });
   } catch (err) {
     console.error('Error sending prayer request:', err);
