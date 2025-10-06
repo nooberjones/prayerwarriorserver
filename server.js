@@ -765,17 +765,23 @@ app.post('/api/send-prayer-request', async (req, res) => {
       const title = '🙏 New Prayer Request';
       const body = `${requesterName} is asking for prayer: ${prayerText.substring(0, 80)}${prayerText.length > 80 ? '...' : ''}`;
       
-      // Include prayer_request_id in notification data for navigation
+      // Include ALL required device and prayer data for client-side handling
       const notificationData = {
         type: 'prayer_request',
         requesterName: requesterName,
         prayerText: prayerText,
+        // Device ID information for client-side filtering and display
+        device_id: device.device_id, // Recipient device ID
+        requesterDeviceId: requesterDeviceId || '', // Original requester device ID
       };
       
       // Add prayer_request_id if provided
       if (prayer_request_id) {
         notificationData.prayer_request_id = prayer_request_id.toString();
       }
+      
+      console.log(`📤 Sending prayer request notification to device: ${device.device_id}`);
+      console.log(`📋 Notification data:`, JSON.stringify(notificationData, null, 2));
       
       return sendPushNotification(
         device.push_token,
@@ -847,16 +853,25 @@ app.post('/api/send-prayer-joined', async (req, res) => {
     const title = '❤️ Someone Joined Your Prayer';
     const body = `${prayerRequest.prayer_count} ${prayerRequest.prayer_count === 1 ? 'person is' : 'people are'} now praying with you!`;
     
+    // Include ALL required device and prayer data for client-side handling
+    const notificationData = {
+      type: 'prayer_joined',
+      prayer_request_id: prayer_request_id.toString(),
+      prayer_count: prayerRequest.prayer_count.toString(),
+      // Device ID information for client-side filtering and display
+      device_id: prayerRequest.device_id, // Prayer creator's device ID (recipient)
+      joiner_device_id: joiner_device_id || '', // Device that joined the prayer
+    };
+    
+    console.log(`📤 Sending prayer joined notification to device: ${prayerRequest.device_id}`);
+    console.log(`📋 Notification data:`, JSON.stringify(notificationData, null, 2));
+    
     const success = await sendPushNotification(
       prayerRequest.push_token,
       prayerRequest.platform,
       title,
       body,
-      {
-        type: 'prayer_joined',
-        prayer_request_id: prayer_request_id.toString(),
-        prayer_count: prayerRequest.prayer_count.toString(),
-      }
+      notificationData
     );
     
     if (success) {
@@ -886,17 +901,23 @@ app.post('/api/send-daily-reminder', async (req, res) => {
     const title = '🕐 Daily Prayer Time';
     const body = 'Take a moment to connect with God and pray for others in your community.';
     
-    const notificationPromises = devices.map(device => 
-      sendPushNotification(
+    const notificationPromises = devices.map(device => {
+      // Include device_id for client-side handling
+      const notificationData = {
+        type: 'daily_reminder',
+        device_id: device.device_id, // Recipient device ID
+      };
+      
+      console.log(`📤 Sending daily reminder to device: ${device.device_id}`);
+      
+      return sendPushNotification(
         device.push_token,
         device.platform,
         title,
         body,
-        {
-          type: 'daily_reminder',
-        }
-      )
-    );
+        notificationData
+      );
+    });
     
     const results = await Promise.allSettled(notificationPromises);
     const successCount = results.filter(result => result.status === 'fulfilled' && result.value).length;
