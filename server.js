@@ -1046,7 +1046,14 @@ app.post('/api/send-test-notification', async (req, res) => {
     
     const testTitle = title || '🧪 Test Notification';
     const testBody = body || 'This is a test notification from Prayer Warriors app!';
-    const testData = data || { type: 'test', test_timestamp: new Date().toISOString() };
+    const testData = data || { 
+      type: 'test', 
+      test_timestamp: new Date().toISOString(),
+      device_id: device_id // Include device_id in test notification data
+    };
+    
+    console.log(`🧪 Sending test notification to device: ${device_id}`);
+    console.log(`📋 Test notification data:`, JSON.stringify(testData, null, 2));
     
     const success = await sendPushNotification(
       device.push_token,
