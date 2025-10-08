@@ -118,6 +118,11 @@ app.post('/api/init-database', async (req, res) => {
         (1, 'Job', 'main', NULL),
         (16, 'I just lost my job', 'job', 1),
         (17, 'I need a job', 'job', 1),
+        (21, 'Family member needs a job', 'job', 1),
+        (22, 'Friend needs a job', 'job', 1),
+        (23, 'Work place drama', 'job', 1),
+        (24, 'Boss issue', 'job', 1),
+        (25, 'Stress', 'job', 1),
         (2, 'Finances', 'main', NULL),
         (18, 'Budget Help', 'Finances', 2),
         (19, 'Work - Raise', 'Finances', 2),
@@ -134,6 +139,13 @@ app.post('/api/init-database', async (req, res) => {
         (13, 'Health - Parent', 'health', 10),
         (14, 'Health - Child', 'health', 10),
         (20, 'Pregnancy', 'health', 10),
+        (26, 'Health - Self', 'health', 10),
+        (27, 'Depression', 'main', NULL),
+        (28, 'Depression - Self', 'depression', 27),
+        (29, 'Depression - Spouse', 'depression', 27),
+        (30, 'Depression - Friend', 'depression', 27),
+        (31, 'Depression - Parent', 'depression', 27),
+        (32, 'Depression - Child', 'depression', 27),
         (15, 'Other - God will know', 'main', NULL)
       ON CONFLICT (id) DO NOTHING
     `);
