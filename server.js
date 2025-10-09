@@ -730,20 +730,37 @@ async function sendPushNotification(pushToken, platform, title, body, data = {})
         },
       },
       apns: {
+        headers: {
+          'apns-priority': '10', // High priority for immediate delivery
+          'apns-push-type': 'alert', // Alert type for visible notifications
+          'apns-topic': 'com.coirle.prayerwarriorapp', // Your bundle ID
+        },
         payload: {
           aps: {
+            alert: {
+              title: title,
+              body: body,
+            },
             sound: 'default',
             badge: 1,
+            'content-available': 1, // Allows background processing
+            'mutable-content': 1, // Allows notification service extensions
           },
         },
       },
     };
     
     const response = await firebaseAdmin.messaging().send(message);
-    console.log(`✅ Push notification sent successfully: ${response}`);
+    console.log(`✅ ${platform} push notification sent successfully: ${response}`);
     return true;
   } catch (error) {
-    console.error('❌ Error sending push notification:', error.message);
+    console.error(`❌ Error sending ${platform} push notification:`, error.message);
+    console.error(`❌ Error code: ${error.code}`);
+    if (error.code === 'messaging/registration-token-not-registered') {
+      console.error(`❌ Token invalid or app uninstalled: ${pushToken.substring(0, 20)}...`);
+    } else if (error.code === 'messaging/invalid-registration-token') {
+      console.error(`❌ Malformed token: ${pushToken.substring(0, 20)}...`);
+    }
     return false;
   }
 }
