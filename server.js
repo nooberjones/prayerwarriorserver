@@ -1387,8 +1387,8 @@ app.post('/api/send-app-update-notification', async (req, res) => {
         type: 'app_update_required',
         update_type: 'migration',
         message: 'New server and app version available',
-        play_store_url: 'https://play.google.com/store/apps/details?id=com.coirle.prayerwarriorapp',
-        app_store_url: 'https://apps.apple.com/app/prayer-warriors/id6670176415',
+        play_store_url: 'https://play.google.com/store/apps/details?id=com.prayerwarriorapp',
+        app_store_url: 'https://apps.apple.com/us/app/praying-warriors/id6753728261',
         device_id: device.device_id,
         urgent: 'true',
         migration_notice: 'This server will be discontinued. Please update to the latest version to continue using Prayer Warriors.'
@@ -1464,8 +1464,8 @@ app.post('/api/send-app-update-notification', async (req, res) => {
       platform_breakdown: platformResults,
       notification_type: 'app_update_required',
       stores: {
-        play_store: 'https://play.google.com/store/apps/details?id=com.coirle.prayerwarriorapp',
-        app_store: 'https://apps.apple.com/app/prayer-warriors/id6670176415'
+        play_store: 'https://play.google.com/store/apps/details?id=com.prayerwarriorapp',
+        app_store: 'https://apps.apple.com/us/app/praying-warriors/id6753728261'
       }
     });
   } catch (err) {
