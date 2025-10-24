@@ -709,6 +709,11 @@ async function sendPushNotification(pushToken, platform, title, body, data = {})
   }
   
   try {
+    console.log(`📤 Sending ${platform} notification to token: ${pushToken.substring(0, 20)}...`);
+    console.log(`   📋 Title: ${title}`);
+    console.log(`   📋 Body: ${body.substring(0, 100)}${body.length > 100 ? '...' : ''}`);
+    console.log(`   📋 Data keys: ${Object.keys(data).join(', ')}`);
+    
     const message = {
       token: pushToken,
       notification: {
@@ -728,6 +733,10 @@ async function sendPushNotification(pushToken, platform, title, body, data = {})
           defaultSound: true,
           defaultVibrateTimings: true,
         },
+        data: {
+          ...data,
+          timestamp: new Date().toISOString(),
+        }
       },
       apns: {
         headers: {
@@ -746,21 +755,41 @@ async function sendPushNotification(pushToken, platform, title, body, data = {})
             'content-available': 1, // Allows background processing
             'mutable-content': 1, // Allows notification service extensions
           },
+          // Custom data goes here for iOS
+          ...data,
+          timestamp: new Date().toISOString(),
         },
       },
     };
     
+    console.log(`   📱 Platform config: ${platform}`);
+    if (platform === 'android') {
+      console.log(`   🤖 Android config: channel=${message.android.notification.channelId}, priority=${message.android.notification.priority}`);
+    } else if (platform === 'ios') {
+      console.log(`   🍎 iOS config: priority=${message.apns.headers['apns-priority']}, topic=${message.apns.headers['apns-topic']}`);
+    }
+    
     const response = await firebaseAdmin.messaging().send(message);
-    console.log(`✅ ${platform} push notification sent successfully: ${response}`);
+    console.log(`   ✅ ${platform} push notification sent successfully: ${response}`);
     return true;
   } catch (error) {
-    console.error(`❌ Error sending ${platform} push notification:`, error.message);
-    console.error(`❌ Error code: ${error.code}`);
+    console.error(`   ❌ Error sending ${platform} push notification:`, error.message);
+    console.error(`   ❌ Error code: ${error.code}`);
+    
     if (error.code === 'messaging/registration-token-not-registered') {
-      console.error(`❌ Token invalid or app uninstalled: ${pushToken.substring(0, 20)}...`);
+      console.error(`   ❌ Token invalid or app uninstalled: ${pushToken.substring(0, 20)}...`);
     } else if (error.code === 'messaging/invalid-registration-token') {
-      console.error(`❌ Malformed token: ${pushToken.substring(0, 20)}...`);
+      console.error(`   ❌ Malformed token: ${pushToken.substring(0, 20)}...`);
+    } else if (error.code === 'messaging/invalid-argument') {
+      console.error(`   ❌ Invalid message format or data`);
+      console.error(`   🔍 Check data types - all must be strings for FCM`);
+    } else if (error.code === 'messaging/authentication-error') {
+      console.error(`   ❌ Firebase authentication failed`);
+    } else {
+      console.error(`   ❌ Unknown FCM error: ${error.code || 'NO_CODE'}`);
+      console.error(`   📋 Full error:`, error);
     }
+    
     return false;
   }
 }
@@ -774,7 +803,23 @@ app.post('/api/send-prayer-request', async (req, res) => {
   }
   
   try {
-    // Get all active devices (excluding the requester's device)
+    console.log('🚨 === CROSS-PLATFORM NOTIFICATION DEBUG ===');
+    console.log(`📤 Prayer request from device: ${requesterDeviceId}`);
+    console.log(`👤 Requester: ${requesterName}`);
+    console.log(`🙏 Prayer: ${prayerText.substring(0, 50)}...`);
+    console.log(`🆔 Prayer Request ID: ${prayer_request_id}`);
+    
+    // Get ALL active devices first (for debugging)
+    const allDevicesResult = await pool.query('SELECT device_id, push_token, platform FROM devices WHERE push_token IS NOT NULL');
+    const allDevices = allDevicesResult.rows;
+    
+    console.log(`📱 Total registered devices: ${allDevices.length}`);
+    console.log('📋 All registered devices:');
+    allDevices.forEach(device => {
+      console.log(`   📱 ${device.device_id} (${device.platform}) - Token: ${device.push_token?.substring(0, 20)}...`);
+    });
+    
+    // Get target devices (excluding the requester's device)
     let query = 'SELECT device_id, push_token, platform FROM devices WHERE push_token IS NOT NULL';
     let params = [];
     
@@ -786,11 +831,34 @@ app.post('/api/send-prayer-request', async (req, res) => {
     const devicesResult = await pool.query(query, params);
     const devices = devicesResult.rows;
     
-    console.log(`📤 Sending prayer request to ${devices.length} devices`);
-    console.log(`📋 Prayer request ID: ${prayer_request_id}`);
+    console.log(`🎯 Target devices (excluding requester): ${devices.length}`);
+    console.log('📋 Target devices by platform:');
+    const platformBreakdown = devices.reduce((acc, device) => {
+      acc[device.platform] = (acc[device.platform] || 0) + 1;
+      return acc;
+    }, {});
+    Object.entries(platformBreakdown).forEach(([platform, count]) => {
+      console.log(`   📱 ${platform}: ${count} devices`);
+    });
+    
+    if (devices.length === 0) {
+      console.log('⚠️ No target devices found for notification');
+      return res.json({
+        success: true,
+        message: 'No devices to notify',
+        devices_notified: 0,
+        successful_notifications: 0,
+        debug_info: {
+          total_registered: allDevices.length,
+          requester_excluded: requesterDeviceId ? 1 : 0
+        }
+      });
+    }
+    
+    console.log('📤 Sending notifications to target devices...');
     
     // Send push notifications to all devices
-    const notificationPromises = devices.map(device => {
+    const notificationPromises = devices.map(async (device, index) => {
       const title = '🙏 New Prayer Request';
       const body = `${requesterName} is asking for prayer: ${prayerText.substring(0, 80)}${prayerText.length > 80 ? '...' : ''}`;
       
@@ -809,34 +877,86 @@ app.post('/api/send-prayer-request', async (req, res) => {
         notificationData.prayer_request_id = prayer_request_id.toString();
       }
       
-      console.log(`📤 Sending prayer request notification to device: ${device.device_id}`);
-      console.log(`📋 Notification data:`, JSON.stringify(notificationData, null, 2));
+      console.log(`📤 [${index + 1}/${devices.length}] Sending to: ${device.device_id} (${device.platform})`);
+      console.log(`   Token: ${device.push_token.substring(0, 20)}...`);
+      console.log(`   Data: ${JSON.stringify(notificationData, null, 2)}`);
       
-      return sendPushNotification(
-        device.push_token,
-        device.platform,
-        title,
-        body,
-        notificationData
-      );
+      try {
+        const success = await sendPushNotification(
+          device.push_token,
+          device.platform,
+          title,
+          body,
+          notificationData
+        );
+        
+        console.log(`   ${success ? '✅' : '❌'} Result: ${success ? 'SUCCESS' : 'FAILED'}`);
+        return { device: device.device_id, platform: device.platform, success };
+      } catch (error) {
+        console.log(`   ❌ Exception: ${error.message}`);
+        return { device: device.device_id, platform: device.platform, success: false, error: error.message };
+      }
     });
     
     // Wait for all notifications to be sent
     const results = await Promise.allSettled(notificationPromises);
-    const successCount = results.filter(result => result.status === 'fulfilled' && result.value).length;
+    const detailedResults = results.map(result => 
+      result.status === 'fulfilled' ? result.value : { success: false, error: 'Promise rejected' }
+    );
     
-    console.log(`✅ Prayer request notifications sent: ${successCount}/${devices.length} successful`);
+    const successCount = detailedResults.filter(result => result.success).length;
+    const failureCount = detailedResults.filter(result => !result.success).length;
+    
+    // Platform-specific success rates
+    const platformResults = detailedResults.reduce((acc, result) => {
+      if (!acc[result.platform]) {
+        acc[result.platform] = { total: 0, success: 0, failed: 0 };
+      }
+      acc[result.platform].total++;
+      if (result.success) {
+        acc[result.platform].success++;
+      } else {
+        acc[result.platform].failed++;
+      }
+      return acc;
+    }, {});
+    
+    console.log('🚨 === NOTIFICATION RESULTS SUMMARY ===');
+    console.log(`✅ Successful: ${successCount}/${devices.length}`);
+    console.log(`❌ Failed: ${failureCount}/${devices.length}`);
+    console.log('📊 Results by platform:');
+    Object.entries(platformResults).forEach(([platform, stats]) => {
+      console.log(`   📱 ${platform}: ${stats.success}/${stats.total} successful (${stats.failed} failed)`);
+    });
+    
+    // Log failures for debugging
+    const failures = detailedResults.filter(result => !result.success);
+    if (failures.length > 0) {
+      console.log('❌ Failed notifications:');
+      failures.forEach(failure => {
+        console.log(`   📱 ${failure.device} (${failure.platform}): ${failure.error || 'Unknown error'}`);
+      });
+    }
+    
+    console.log('🚨 === END NOTIFICATION DEBUG ===');
     
     res.json({
       success: true,
       message: 'Prayer request sent to all devices',
       devices_notified: devices.length,
       successful_notifications: successCount,
-      prayer_request_id: prayer_request_id
+      failed_notifications: failureCount,
+      platform_breakdown: platformResults,
+      prayer_request_id: prayer_request_id,
+      debug_info: {
+        total_registered: allDevices.length,
+        requester_device: requesterDeviceId,
+        targeted_devices: devices.length
+      }
     });
   } catch (err) {
-    console.error('Error sending prayer request:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Error sending prayer request:', err);
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
@@ -970,15 +1090,137 @@ app.get('/api/devices', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT device_id, platform, last_active, created_at,
-             CASE WHEN push_token IS NOT NULL THEN 'yes' ELSE 'no' END as has_push_token
+             CASE WHEN push_token IS NOT NULL THEN 'yes' ELSE 'no' END as has_push_token,
+             CASE WHEN push_token IS NOT NULL THEN SUBSTRING(push_token, 1, 20) || '...' ELSE NULL END as token_preview
       FROM devices 
-      ORDER BY last_active DESC
+      ORDER BY platform, last_active DESC
     `);
     
-    res.json(result.rows);
+    // Also provide platform breakdown
+    const platformBreakdown = await pool.query(`
+      SELECT platform, 
+             COUNT(*) as total_devices,
+             COUNT(CASE WHEN push_token IS NOT NULL THEN 1 END) as devices_with_tokens
+      FROM devices 
+      GROUP BY platform
+      ORDER BY platform
+    `);
+    
+    res.json({
+      devices: result.rows,
+      platform_breakdown: platformBreakdown.rows,
+      total_devices: result.rows.length,
+      firebase_admin_available: firebaseAdmin ? true : false
+    });
   } catch (err) {
     console.error('Error fetching devices:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Debug cross-platform notifications endpoint
+app.post('/api/debug-cross-platform', async (req, res) => {
+  try {
+    console.log('🔍 === CROSS-PLATFORM DEBUG ANALYSIS ===');
+    
+    // Get all devices with platform breakdown
+    const allDevices = await pool.query(`
+      SELECT device_id, platform, push_token IS NOT NULL as has_token, created_at, last_active
+      FROM devices 
+      ORDER BY platform, created_at DESC
+    `);
+    
+    const devices = allDevices.rows;
+    
+    // Platform analysis
+    const platformStats = devices.reduce((acc, device) => {
+      if (!acc[device.platform]) {
+        acc[device.platform] = { total: 0, with_tokens: 0, without_tokens: 0, devices: [] };
+      }
+      acc[device.platform].total++;
+      if (device.has_token) {
+        acc[device.platform].with_tokens++;
+      } else {
+        acc[device.platform].without_tokens++;
+      }
+      acc[device.platform].devices.push({
+        device_id: device.device_id,
+        has_token: device.has_token,
+        created_at: device.created_at,
+        last_active: device.last_active
+      });
+      return acc;
+    }, {});
+    
+    console.log('📊 Platform Statistics:');
+    Object.entries(platformStats).forEach(([platform, stats]) => {
+      console.log(`   📱 ${platform}: ${stats.total} total, ${stats.with_tokens} with tokens, ${stats.without_tokens} without tokens`);
+    });
+    
+    // Check Firebase Admin status
+    const firebaseStatus = {
+      initialized: firebaseAdmin ? true : false,
+      service_account_env: process.env.FIREBASE_SERVICE_ACCOUNT ? 'present' : 'missing'
+    };
+    
+    console.log('🔥 Firebase Status:', firebaseStatus);
+    
+    // Recent notification activity (if any)
+    const recentRequests = await pool.query(`
+      SELECT pr.id, pr.device_id as requester_device, pr.created_at, pr.description
+      FROM prayer_requests pr
+      WHERE pr.created_at > NOW() - INTERVAL '24 hours'
+      ORDER BY pr.created_at DESC
+      LIMIT 10
+    `);
+    
+    console.log(`📋 Recent prayer requests (last 24h): ${recentRequests.rows.length}`);
+    
+    const analysis = {
+      total_devices: devices.length,
+      platform_breakdown: platformStats,
+      firebase_admin_status: firebaseStatus,
+      recent_prayer_requests: recentRequests.rows.length,
+      potential_issues: [],
+      recommendations: []
+    };
+    
+    // Analyze potential issues
+    if (!firebaseAdmin) {
+      analysis.potential_issues.push('Firebase Admin SDK not initialized - notifications will not work');
+      analysis.recommendations.push('Check FIREBASE_SERVICE_ACCOUNT environment variable');
+    }
+    
+    const totalWithTokens = Object.values(platformStats).reduce((sum, stats) => sum + stats.with_tokens, 0);
+    if (totalWithTokens === 0) {
+      analysis.potential_issues.push('No devices have push tokens registered');
+      analysis.recommendations.push('Ensure client apps are registering push tokens correctly');
+    }
+    
+    const platforms = Object.keys(platformStats);
+    if (platforms.length < 2) {
+      analysis.potential_issues.push('Only one platform type registered - cannot test cross-platform');
+      analysis.recommendations.push('Register devices from both iOS and Android to test cross-platform notifications');
+    }
+    
+    // Check for platform imbalance
+    if (platforms.length === 2) {
+      const [platform1, platform2] = platforms;
+      const ratio = platformStats[platform1].with_tokens / platformStats[platform2].with_tokens;
+      if (ratio > 5 || ratio < 0.2) {
+        analysis.potential_issues.push(`Significant platform imbalance: ${platform1}=${platformStats[platform1].with_tokens}, ${platform2}=${platformStats[platform2].with_tokens}`);
+        analysis.recommendations.push('Test with more balanced number of devices per platform');
+      }
+    }
+    
+    console.log('🚨 Analysis complete');
+    console.log('❌ Potential issues:', analysis.potential_issues);
+    console.log('💡 Recommendations:', analysis.recommendations);
+    
+    res.json(analysis);
+  } catch (err) {
+    console.error('Error in cross-platform debug:', err);
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
@@ -1108,6 +1350,127 @@ app.post('/api/send-test-notification', async (req, res) => {
   } catch (err) {
     console.error('Error sending test notification:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Send app update notification to all devices
+app.post('/api/send-app-update-notification', async (req, res) => {
+  try {
+    console.log('📱 === SENDING APP UPDATE NOTIFICATION ===');
+    
+    const devicesResult = await pool.query(
+      'SELECT device_id, push_token, platform FROM devices WHERE push_token IS NOT NULL'
+    );
+    const devices = devicesResult.rows;
+    
+    console.log(`📤 Sending app update notification to ${devices.length} devices`);
+    
+    const title = '📱 Prayer Warriors App Update Required';
+    const body = 'A new version of Prayer Warriors is now available on the Play Store and App Store. Please update to continue receiving prayer requests and community updates.';
+    
+    if (devices.length === 0) {
+      console.log('⚠️ No devices found for notification');
+      return res.json({
+        success: true,
+        message: 'No devices to notify',
+        devices_notified: 0,
+        successful_notifications: 0
+      });
+    }
+    
+    console.log('📤 Sending update notifications to all devices...');
+    
+    // Send push notifications to all devices
+    const notificationPromises = devices.map(async (device, index) => {
+      // Include update information for client-side handling
+      const notificationData = {
+        type: 'app_update_required',
+        update_type: 'migration',
+        message: 'New server and app version available',
+        play_store_url: 'https://play.google.com/store/apps/details?id=com.coirle.prayerwarriorapp',
+        app_store_url: 'https://apps.apple.com/app/prayer-warriors/id6670176415',
+        device_id: device.device_id,
+        urgent: 'true',
+        migration_notice: 'This server will be discontinued. Please update to the latest version to continue using Prayer Warriors.'
+      };
+      
+      console.log(`📤 [${index + 1}/${devices.length}] Sending to: ${device.device_id} (${device.platform})`);
+      
+      try {
+        const success = await sendPushNotification(
+          device.push_token,
+          device.platform,
+          title,
+          body,
+          notificationData
+        );
+        
+        console.log(`   ${success ? '✅' : '❌'} Result: ${success ? 'SUCCESS' : 'FAILED'}`);
+        return { device: device.device_id, platform: device.platform, success };
+      } catch (error) {
+        console.log(`   ❌ Exception: ${error.message}`);
+        return { device: device.device_id, platform: device.platform, success: false, error: error.message };
+      }
+    });
+    
+    // Wait for all notifications to be sent
+    const results = await Promise.allSettled(notificationPromises);
+    const detailedResults = results.map(result => 
+      result.status === 'fulfilled' ? result.value : { success: false, error: 'Promise rejected' }
+    );
+    
+    const successCount = detailedResults.filter(result => result.success).length;
+    const failureCount = detailedResults.filter(result => !result.success).length;
+    
+    // Platform-specific success rates
+    const platformResults = detailedResults.reduce((acc, result) => {
+      if (!acc[result.platform]) {
+        acc[result.platform] = { total: 0, success: 0, failed: 0 };
+      }
+      acc[result.platform].total++;
+      if (result.success) {
+        acc[result.platform].success++;
+      } else {
+        acc[result.platform].failed++;
+      }
+      return acc;
+    }, {});
+    
+    console.log('📱 === APP UPDATE NOTIFICATION RESULTS ===');
+    console.log(`✅ Successful: ${successCount}/${devices.length}`);
+    console.log(`❌ Failed: ${failureCount}/${devices.length}`);
+    console.log('📊 Results by platform:');
+    Object.entries(platformResults).forEach(([platform, stats]) => {
+      console.log(`   📱 ${platform}: ${stats.success}/${stats.total} successful (${stats.failed} failed)`);
+    });
+    
+    // Log failures for debugging
+    const failures = detailedResults.filter(result => !result.success);
+    if (failures.length > 0) {
+      console.log('❌ Failed notifications:');
+      failures.forEach(failure => {
+        console.log(`   📱 ${failure.device} (${failure.platform}): ${failure.error || 'Unknown error'}`);
+      });
+    }
+    
+    console.log('📱 === END APP UPDATE NOTIFICATION ===');
+    
+    res.json({
+      success: true,
+      message: 'App update notification sent to all devices',
+      devices_notified: devices.length,
+      successful_notifications: successCount,
+      failed_notifications: failureCount,
+      platform_breakdown: platformResults,
+      notification_type: 'app_update_required',
+      stores: {
+        play_store: 'https://play.google.com/store/apps/details?id=com.coirle.prayerwarriorapp',
+        app_store: 'https://apps.apple.com/app/prayer-warriors/id6670176415'
+      }
+    });
+  } catch (err) {
+    console.error('❌ Error sending app update notification:', err);
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
